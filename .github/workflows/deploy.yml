@@ -1,0 +1,84 @@
+# Publishes the website.
+#
+# This runs by itself every time something changes on the "main" branch: when you
+# publish from Studio, when you upload a file on github.com, or when you press
+# "Run workflow" on the Actions page. You never need to edit this file.
+#
+# What it does, in plain words:
+#   1. Gets your files.
+#   2. Checks every entry and photo. If something is wrong it stops and lists
+#      what to fix, and the live website stays exactly as it was.
+#   3. Builds the website (resizes photos, writes the pages).
+#   4. Puts the new website live.
+
+name: Publish website
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One publish at a time. A second one waits for the first instead of cutting it off.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Get the files
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      # Two packages only: sharp (resizes photos) and marked (reads your text).
+      # Install scripts are off: neither needs one.
+      - name: Install what the build needs
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --ignore-scripts --no-audit --no-fund
+          else
+            npm install --ignore-scripts --no-audit --no-fund
+          fi
+
+      # Photos that were processed before are kept, so a publish takes seconds, not minutes.
+      - name: Remember photos that were already processed
+        uses: actions/cache@v4
+        with:
+          path: .cache/photos
+          key: photos-${{ hashFiles('content/**') }}
+          restore-keys: photos-
+
+      # Checks the content first. Problems appear as red notes on the run page.
+      - name: Check the content and build the website
+        run: npm run build
+
+      - name: Upload the website
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Put the website live
+        id: deployment
+        uses: actions/deploy-pages@v4
